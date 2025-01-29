@@ -8,8 +8,8 @@ on:
 
 env:
   MAIN_DIR: ${{ github.workspace }}
-  KERNEL_DIR: ${{ github.workspace }}/kernel
-  ZIMAGE_DIR: ${{ github.workspace }}/kernel/out/arch/arm64/boot
+  KERNEL_DIR: ${{ github.workspace }}
+  ZIMAGE_DIR: ${{ github.workspace }}/out/arch/arm64/boot
   CLANG_DIR: ${{ github.workspace }}/clang
   DEVICE: alioth  # Only for Alioth device
   KERNEL_DEFCONFIG: alioth_defconfig  # Alioth configuration
