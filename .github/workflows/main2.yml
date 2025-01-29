@@ -26,23 +26,22 @@ jobs:
           echo "DEVICE_NAME2=aliothin" >> $GITHUB_ENV
           echo "IS_SLOT_DEVICE=1" >> $GITHUB_ENV
           echo "VENDOR_BOOT_LINES_REMOVED=0" >> $GITHUB_ENV
-          
+          echo "CLANG_CHOICE=1" >> $GITHUB_ENV  # Set the Clang choice here (1 for ZyC, 2 for WeebX)
+
       - name: Download Clang if not found
         run: |
           if [ ! -d "$CLANG_DIR" ]; then
             echo "Clang directory not found. Cloning from GitHub."
-            echo "Choose which Clang to use:"
-            echo "1. ZyC Stable"
-            echo "2. WeebX Stable"
-            read -p "Enter the number of your choice: " clang_choice
-            if [ "$clang_choice" = "1" ]; then
+            if [ "${{ env.CLANG_CHOICE }}" = "1" ]; then
+              echo "Using ZyC Stable Clang."
               wget "$(curl -s https://raw.githubusercontent.com/v3kt0r-87/Clang-Stable/main/clang-zyc.txt)" -O "zyc-clang.tar.gz"
               rm -rf clang && mkdir clang && tar -xvf zyc-clang.tar.gz -C clang && rm -rf zyc-clang.tar.gz
-            elif [ "$clang_choice" = "2" ]; then
+            elif [ "${{ env.CLANG_CHOICE }}" = "2" ]; then
+              echo "Using WeebX Stable Clang."
               wget "$(curl -s https://raw.githubusercontent.com/v3kt0r-87/Clang-Stable/main/clang-weebx.txt)" -O "weebx-clang.tar.gz"
               rm -rf clang && mkdir clang && tar -xvf weebx-clang.tar.gz -C clang && rm -rf weebx-clang.tar.gz
             else
-              echo "Invalid choice. Exiting..."
+              echo "Invalid Clang choice. Exiting..."
               exit 1
             fi
           fi
