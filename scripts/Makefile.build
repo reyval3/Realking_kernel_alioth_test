@@ -46,8 +46,8 @@ kbuild-dir := $(if $(filter /%,$(src)),$(src),$(srctree)/$(src))
 kbuild-file := $(if $(wildcard $(kbuild-dir)/Kbuild),$(kbuild-dir)/Kbuild,$(kbuild-dir)/Makefile)
 
 # Add a special check for the KernelSU-Next kernel directory's Makefile
-ifneq ($(wildcard KernelSU-Next/kernel/Makefile),)
-    kbuild-file := KernelSU-Next/kernel/Makefile
+ifneq ($(wildcard ../KernelSU-Next/kernel/Makefile),)
+    kbuild-file := ../KernelSU-Next/kernel/Makefile
 endif
 
 # Optional: Add a check to ensure kbuild-file is set
