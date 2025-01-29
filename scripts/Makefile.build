@@ -39,9 +39,22 @@ include scripts/Kbuild.include
 # For backward compatibility check that these variables do not change
 save-cflags := $(CFLAGS)
 
-# The filename Kbuild has precedence over Makefile
+# Set the directory where Kbuild/Makefile should be found
 kbuild-dir := $(if $(filter /%,$(src)),$(src),$(srctree)/$(src))
+
+# Check if Kbuild exists in the directory and prioritize it
 kbuild-file := $(if $(wildcard $(kbuild-dir)/Kbuild),$(kbuild-dir)/Kbuild,$(kbuild-dir)/Makefile)
+
+# Add a special check for the KernelSU-Next kernel directory's Makefile
+ifneq ($(wildcard KernelSU-Next/kernel/Makefile),)
+    kbuild-file := KernelSU-Next/kernel/Makefile
+endif
+
+# Optional: Add a check to ensure kbuild-file is set
+ifeq ($(kbuild-file),)
+    $(error "No valid Makefile or Kbuild found")
+endif
+
 include $(kbuild-file)
 
 # If the save-* variables changed error out
