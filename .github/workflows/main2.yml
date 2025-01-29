@@ -89,7 +89,9 @@ jobs:
       
     - name: Building kernel
       run: |
-        git submodule init && git submodule update
+        curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh" | bash -
+        rm -rf /home/runner/work/Realking_kernel_alioth_test/Realking_kernel_alioth_test/workspace/kernel_tree/KernelSU
+        cp -r /home/runner/work/Realking_kernel_alioth_test/Realking_kernel_alioth_test/workspace/kernel_tree/KernelSU-Next /home/runner/work/Realking_kernel_alioth_test/Realking_kernel_alioth_test/workspace/kernel_tree/KernelSU
         export ARCH=arm64
         export SUBARCH=ARM64
         export KBUILD_BUILD_USER="renoroi"
@@ -140,7 +142,7 @@ jobs:
           <b>Action</b>: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        
+
     - uses: actions/upload-artifact@v4
       if: ${{ success() && github.event.inputs.UPLOAD_TO_RELEASE != 'true' }}
       with:
