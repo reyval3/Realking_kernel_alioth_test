@@ -49,9 +49,16 @@ jobs:
         mkdir clang && tar -xf clang.tar.gz -C clang
         echo "CLANG_PATH=$(pwd)/clang/bin" >> $GITHUB_ENV
 
-    - name: Clone Kernel Source
+    - name: Clone kernel source
       run: |
+        if [ -d "kernel" ]; then
+          echo "Removing existing kernel directory..."
+          rm -rf kernel
+        fi
         git clone --depth=1 ${{ github.event.inputs.KERNEL_TREE }} -b ${{ github.event.inputs.KERNEL_TREE_BRANCH }} kernel
+      working-directory: ${{ steps.workspace.outputs.workspace-folder }}
+      id: kernel
+
 
     - name: Build Kernel
       run: |
