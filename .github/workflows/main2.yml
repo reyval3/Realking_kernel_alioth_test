@@ -40,118 +40,65 @@ jobs:
       contents: write
     steps:
     
-    - name: Display User Inputs
-      run: |
-        echo "::group::User Environment Variables"
-        echo "Custom Build Title: ${{ github.event.inputs.BUILD_TITLE }}"
-        echo "Kernel Tree: ${{ github.event.inputs.KERNEL_TREE }}/tree/${{ github.event.inputs.KERNEL_TREE_BRANCH }}"
-        echo "Codename: ${{ github.event.inputs.CODENAME }}"
-        echo "AnyKernel Url: ${{ github.event.inputs.ANYKERNEL_URL }}/tree/${{ github.event.inputs.ANYKERNEL_BRANCH }}"
-        echo "Second AnyKernel Url: ${{ github.event.inputs.SECOND_ANYKERNEL_URL }}/tree/${{ github.event.inputs.SECOND_ANYKERNEL_BRANCH }}"
-        echo "::endgroup::"
-  
+    - name: Checkout repository with submodules
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+        fetch-depth: 0  # Ensure full history is available
+
     - name: Install prerequisites
       run: |
         sudo apt-get update
-        sudo apt-get install -y curl git ftp lftp wget libarchive-tools ccache python2 python2-dev python3
-        sudo apt-get install -y pngcrush schedtool dpkg-dev liblz4-tool make optipng maven device-tree-compiler 
-        sudo apt-get install -y libc6-dev-i386 lib32ncurses5-dev libx11-dev lib32z-dev libgl1-mesa-dev xsltproc
-        sudo apt-get install -y libxml2-utils libbz2-dev libbz2-1.0 libghc-bzlib-dev squashfs-tools lzop flex tree
-        sudo apt-get install -y build-essential bc gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi libssl-dev libfl-dev
-        sudo apt-get install -y pwgen libswitch-perl policycoreutils minicom libxml-sax-base-perl libxml-simple-perl 
-        sudo apt-get install -y zip unzip tar gzip bzip2 rar unrar llvm g++-multilib bison gperf zlib1g-dev automake
+        sudo apt-get install -y curl git wget ccache python3
+        sudo apt-get install -y build-essential bc flex bison libssl-dev
+        sudo apt-get install -y gcc-aarch64-linux-gnu libfl-dev zip unzip tar gzip
 
     - name: Initialize workspace
       run: |
         mkdir workspace
         cd workspace
-        echo "workspace-folder=$(pwd)" >> $GITHUB_OUTPUT
-        echo "start_time=$(date +%s)" >> $GITHUB_OUTPUT
-        echo "build_title=${{ github.event.inputs.BUILD_TITLE || github.event.inputs.CODENAME }}" >> $GITHUB_OUTPUT
-      id: workspace
+        echo "workspace-folder=$(pwd)" >> $GITHUB_ENV
+        echo "start_time=$(date +%s)" >> $GITHUB_ENV
+        echo "build_title=${{ github.event.inputs.BUILD_TITLE || github.event.inputs.CODENAME }}" >> $GITHUB_ENV
 
-    - name: Prepare the build environment
+    - name: Download and extract Clang toolchain
       run: |
-        sudo apt install flex && sudo apt install libncurses6
         wget https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r547379.tar.gz -O clang.tar.gz
         mkdir clang
         tar -xf clang.tar.gz -C clang
-        echo "tools-folder=$(pwd)" >> $GITHUB_OUTPUT
-      working-directory: ${{ steps.workspace.outputs.workspace-folder }}
-      id: tools
+        echo "tools-folder=$(pwd)/clang" >> $GITHUB_ENV
+      working-directory: ${{ env.workspace-folder }}
 
-    - name: Clone kernel source
+    - name: Clone kernel source with submodules
       run: |
-        git clone --depth=1 ${{ github.event.inputs.KERNEL_TREE }} -b ${{ github.event.inputs.KERNEL_TREE_BRANCH }} kernel_tree
-        echo "kernel-folder=$(pwd)/kernel_tree" >> $GITHUB_OUTPUT
-      working-directory: ${{ steps.workspace.outputs.workspace-folder }}
-      id: kernel
-      
-    - name: Building kernel
+        git clone --recursive --depth=1 ${{ github.event.inputs.KERNEL_TREE }} -b ${{ github.event.inputs.KERNEL_TREE_BRANCH }} kernel_tree
+        cd kernel_tree
+        git submodule update --init --recursive
+        git fetch --unshallow || true  # Convert shallow clone to full history
+        echo "kernel-folder=$(pwd)" >> $GITHUB_ENV
+      working-directory: ${{ env.workspace-folder }}
+
+    - name: Ensure KernelSU-Next has full history
       run: |
-        git submodule init && git submodule update
+        cd $GITHUB_ENV/kernel-folder/KernelSU-Next
+        git fetch --unshallow || true
+        export KSU_GIT_VERSION=$(git rev-list --count HEAD)
+        echo "KSU_GIT_VERSION=$KSU_GIT_VERSION" >> $GITHUB_ENV
+
+    - name: Build kernel
+      run: |
+        cd $GITHUB_ENV/kernel-folder
         export ARCH=arm64
         export SUBARCH=ARM64
         export KBUILD_BUILD_USER="renoroi"
         export KBUILD_BUILD_HOST="github"
-        make O=out alioth_defconfig PATH="${{ steps.tools.outputs.tools-folder }}/clang/bin:$PATH"
-        make O=out CC=clang -j$(nproc --all) PATH="${{ steps.tools.outputs.tools-folder }}/clang/bin:$PATH" CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1
-        echo "elapsed_time=$(echo "$(date +%s)"-"${{ steps.workspace.outputs.start_time }}" | bc)" >> $GITHUB_OUTPUT
-      working-directory: ${{ steps.kernel.outputs.kernel-folder }}
-      id: build
+        export KSU_GIT_VERSION=$KSU_GIT_VERSION
+        make O=out alioth_defconfig PATH="$GITHUB_ENV/tools-folder/bin:$PATH"
+        make O=out CC=clang -j$(nproc --all) PATH="$GITHUB_ENV/tools-folder/bin:$PATH" CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1
+        echo "elapsed_time=$(echo "$(date +%s)"-"${{ env.start_time }}" | bc)" >> $GITHUB_ENV
 
-    - name: AnyKernel3
-      if: ${{ success() && github.event.inputs.ANYKERNEL_URL != '' }}
-      run: |
-        if [[ -z "${{ github.event.inputs.ANYKERNEL_BRANCH }}" ]]; then
-          anykernel_branch=${{ github.event.inputs.CODENAME }}
-        else
-          anykernel_branch=${{ github.event.inputs.ANYKERNEL_BRANCH }}
-        fi
-        git clone --recursive --depth=1 ${{ github.event.inputs.ANYKERNEL_URL }} -b $anykernel_branch AnyKernel3
-        if [ -e "Image.gz" ]; then
-          cp -f Image.gz AnyKernel3
-        fi
-        name=N0Fork-noksu-${{ github.event.inputs.CODENAME }}-${{ github.run_id }}.zip
-        cd AnyKernel3
-        zip -q -r $name *
-        mv $name ../
-        echo "zipname=$name" >> $GITHUB_OUTPUT
-      working-directory: ${{ steps.kernel.outputs.kernel-folder }}/out/arch/arm64/boot/
-      id: anykernel
-
-    - name: Check the output directory before uploading
-      run: |
-        ls -al ${{ steps.kernel.outputs.kernel-folder }}/out/arch/arm64/boot/
-
-    - name: Upload to Release
-      if: ${{ github.event.inputs.UPLOAD_TO_RELEASE == 'true' }}
-      uses: softprops/action-gh-release@v2
+    - name: Upload kernel build artifacts
+      uses: actions/upload-artifact@v4
       with:
-        files: |
-          ${{ steps.kernel.outputs.kernel-folder }}/out/arch/arm64/boot/${{ steps.anykernel.outputs.zipname }}
-        name: ${{ github.event.inputs.CODENAME }}-${{ github.run_id }}-NOKSU
-        tag_name: ${{ github.run_id }}
-        body: |
-          <b>${{ steps.workspace.outputs.build_title }}</b>
-          <b>Kernel successfully built!</b>, took ${{ steps.build.outputs.elapsed_time }} seconds.
-          
-          <b>Kernel tree</b>: ${{ github.event.inputs.KERNEL_TREE }}/tree/${{ github.event.inputs.KERNEL_TREE_BRANCH }}
-          <b>Action</b>: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-    - uses: actions/upload-artifact@v4
-      if: ${{ success() && github.event.inputs.UPLOAD_TO_RELEASE != 'true' }}
-      with:
-        name: Image.gz
-        path: ${{ steps.kernel.outputs.kernel-folder }}/out/arch/arm64/boot/Image.gz
-
-    - uses: actions/upload-artifact@v4
-      if: ${{ success() && github.event.inputs.ANYKERNEL_URL != '' && github.event.inputs.UPLOAD_TO_RELEASE != 'true' }}
-      with:
-        name: ${{ steps.anykernel.outputs.zipname }}
-        path: |
-          ${{ steps.kernel.outputs.kernel-folder }}/out/arch/arm64/boot/AnyKernel3/
-          !${{ steps.kernel.outputs.kernel-folder }}/out/arch/arm64/boot/AnyKernel3/.git
-          !${{ steps.kernel.outputs.kernel-folder }}/out/arch/arm64/boot/AnyKernel3/.github
+        name: Kernel Build
+        path: ${{ env.kernel-folder }}/out/arch/arm64/boot/Image.gz
