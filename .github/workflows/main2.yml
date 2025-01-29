@@ -1,91 +1,92 @@
-name: Build Kernel for Alioth
+name: Kernel Build (alioth) - clang-r547379
 
 on:
-  push:
-    branches:
-      - main  # Change to your default branch
+  pull_request:
   workflow_dispatch:
-
-env:
-  MAIN_DIR: ${{ github.workspace }}
-  KERNEL_DIR: ${{ github.workspace }}
-  ZIMAGE_DIR: ${{ github.workspace }}/out/arch/arm64/boot
-  CLANG_DIR: ${{ github.workspace }}/clang
-  DEVICE: alioth  # Only for Alioth device
-  KERNEL_DEFCONFIG: alioth_defconfig  # Alioth configuration
-  DEVICE_NAME1: alioth
-  DEVICE_NAME2: aliothin
-  IS_SLOT_DEVICE: 1
-  VENDOR_BOOT_LINES_REMOVED: 0
+    inputs:
+      BUILD_TITLE:
+        description: 'Custom Build Title'
+        required: false
+      KERNEL_TREE:
+        description: 'Kernel Source'
+        default: 'https://github.com/your-repo/kernel-source.git'
+        required: true
+      KERNEL_TREE_BRANCH:
+        description: 'Kernel Branch'
+        default: 'main'
+        required: true
+      CODENAME:
+        description: 'Device Codename'
+        default: 'alioth'
+        required: true
+      ANYKERNEL_URL:
+        description: 'AnyKernel Repo'
+        default: 'https://github.com/your-repo/AnyKernel3'
+        required: false
+      UPLOAD_TO_RELEASE:
+        description: 'Upload to Release'
+        type: boolean
+        default: false
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+    - name: Checkout Source
+      uses: actions/checkout@v4
 
-      - name: Set up Build Environment
-        run: |
-          sudo apt update
-          sudo apt install -y gcc-aarch64-linux-gnu lld llvm
+    - name: Install Dependencies
+      run: |
+        sudo apt update
+        sudo apt install -y curl git ccache python3 flex bison make bc zip unzip
+        sudo apt install -y gcc-aarch64-linux-gnu clang lld lldb
 
-      - name: Clone Clang Compiler
-        run: |
-          if [ ! -d "$CLANG_DIR" ]; then
-            echo "Cloning Clang Compiler..."
-            wget "$(curl -s https://raw.githubusercontent.com/v3kt0r-87/Clang-Stable/main/clang-zyc.txt)" -O "zyc-clang.tar.gz"
-            rm -rf clang && mkdir clang && tar -xvf zyc-clang.tar.gz -C clang && rm -rf zyc-clang.tar.gz
-          fi
+    - name: Set Up Clang Toolchain
+      run: |
+        wget https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r547379.tar.gz -O clang.tar.gz
+        mkdir clang && tar -xf clang.tar.gz -C clang
+        echo "CLANG_PATH=$(pwd)/clang/bin" >> $GITHUB_ENV
 
-      - name: Build Kernel
-        run: |
-          export PATH="$CLANG_DIR/bin:$PATH"
-          export ARCH=arm64
-          export SUBARCH=arm64
-          export CROSS_COMPILE=aarch64-linux-gnu-
-          
-          cd $KERNEL_DIR
-          
-          # Verify Config File
-          if [ ! -f "arch/arm64/configs/$KERNEL_DEFCONFIG" ]; then
-            echo "ERROR: Kernel config file not found!"
-            exit 1
-          fi
+    - name: Clone Kernel Source
+      run: |
+        git clone --depth=1 ${{ github.event.inputs.KERNEL_TREE }} -b ${{ github.event.inputs.KERNEL_TREE_BRANCH }} kernel
 
-          # Start Build
-          make ARCH=arm64 O=out $KERNEL_DEFCONFIG
-          make -j$(nproc --all) ARCH=arm64 O=out CC=clang CROSS_COMPILE=aarch64-linux-gnu- NM=llvm-nm OBJDUMP=llvm-objdump STRIP=llvm-strip
+    - name: Build Kernel
+      run: |
+        export ARCH=arm64
+        export SUBARCH=arm64
+        export KBUILD_BUILD_USER="GitHub"
+        export KBUILD_BUILD_HOST="Actions"
+        export PATH="$CLANG_PATH:$PATH"
+        cd kernel
+        make O=out alioth_defconfig
+        make O=out CC=clang -j$(nproc --all) CROSS_COMPILE=aarch64-linux-gnu-
 
-      - name: Package Kernel
-        run: |
-          mkdir -p tmp
-          cp -fp $ZIMAGE_DIR/Image.gz tmp
-          cp -fp $ZIMAGE_DIR/dtbo.img tmp
-          cp -fp $ZIMAGE_DIR/dtb tmp
-          cp -rp ./anykernel/* tmp
-          
-          cd tmp
-          7za a -mx9 tmp.zip *
-          cd ..
-          
-          TIME="$(date "+%Y%m%d-%H%M%S")"
-          cp -fp tmp/tmp.zip RealKing-$DEVICE-$TIME.zip
-          rm -rf tmp
+    - name: Package with AnyKernel3
+      if: github.event.inputs.ANYKERNEL_URL != ''
+      run: |
+        git clone --depth=1 ${{ github.event.inputs.ANYKERNEL_URL }} -b main AnyKernel3
+        cp kernel/out/arch/arm64/boot/Image.gz AnyKernel3/
+        cd AnyKernel3
+        zip -r kernel.zip *
+        mv kernel.zip ../
 
-      - name: Upload Kernel Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: RealKing-Kernel
-          path: RealKing-${{ env.DEVICE }}-${{ env.CHOICE }}-${TIME}.zip
+    - name: Upload Kernel to Release
+      if: github.event.inputs.UPLOAD_TO_RELEASE == 'true'
+      uses: softprops/action-gh-release@v2
+      with:
+        files: kernel.zip
+        name: ${{ github.event.inputs.CODENAME }}-${{ github.run_id }}
+        tag_name: ${{ github.run_id }}
+        body: "Kernel build completed successfully."
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: RealKing-${{ env.DEVICE }}-${{ env.CHOICE }}-${TIME}.zip
-          tag_name: "release-${{ github.run_number }}"
-          name: "Kernel Release ${{ github.run_number }}"
-          draft: false
-          prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    - name: Upload Kernel Artifact
+      uses: actions/upload-artifact@v4
+      if: github.event.inputs.UPLOAD_TO_RELEASE != 'true'
+      with:
+        name: kernel.zip
+        path: kernel.zip
