@@ -1,129 +1,91 @@
-name: Build and Release Kernel
+name: Build Kernel for Alioth
 
 on:
   push:
     branches:
-      - main
+      - main  # Change to your default branch
   workflow_dispatch:
+
+env:
+  MAIN_DIR: ${{ github.workspace }}
+  KERNEL_DIR: ${{ github.workspace }}/kernel
+  ZIMAGE_DIR: ${{ github.workspace }}/kernel/out/arch/arm64/boot
+  CLANG_DIR: ${{ github.workspace }}/clang
+  DEVICE: alioth  # Only for Alioth device
+  KERNEL_DEFCONFIG: alioth_defconfig  # Alioth configuration
+  DEVICE_NAME1: alioth
+  DEVICE_NAME2: aliothin
+  IS_SLOT_DEVICE: 1
+  VENDOR_BOOT_LINES_REMOVED: 0
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v2
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-      - name: Set up environment variables
+      - name: Set up Build Environment
         run: |
-          echo "MAIN_DIR=${{ github.workspace }}" >> $GITHUB_ENV
-          echo "KERNEL_DIR=${{ github.workspace }}/kernel" >> $GITHUB_ENV
-          echo "ZIMAGE_DIR=${{ github.workspace }}/kernel/out/arch/arm64/boot" >> $GITHUB_ENV
-          echo "BUILD_START=$(date +"%s")" >> $GITHUB_ENV
-          echo "CLANG_DIR=${{ github.workspace }}/clang" >> $GITHUB_ENV
-          echo "DEVICE=alioth" >> $GITHUB_ENV
-          echo "KERNEL_DEFCONFIG=alioth_defconfig" >> $GITHUB_ENV
-          echo "DEVICE_NAME1=alioth" >> $GITHUB_ENV
-          echo "DEVICE_NAME2=aliothin" >> $GITHUB_ENV
-          echo "IS_SLOT_DEVICE=1" >> $GITHUB_ENV
-          echo "VENDOR_BOOT_LINES_REMOVED=0" >> $GITHUB_ENV
-          echo "CLANG_CHOICE=1" >> $GITHUB_ENV  # Set the Clang choice here (1 for ZyC, 2 for WeebX)
+          sudo apt update
+          sudo apt install -y gcc-aarch64-linux-gnu lld llvm
 
-      - name: Download Clang if not found
+      - name: Clone Clang Compiler
         run: |
           if [ ! -d "$CLANG_DIR" ]; then
-            echo "Clang directory not found. Cloning from GitHub."
-            if [ "${{ env.CLANG_CHOICE }}" = "1" ]; then
-              echo "Using ZyC Stable Clang."
-              wget "$(curl -s https://raw.githubusercontent.com/v3kt0r-87/Clang-Stable/main/clang-zyc.txt)" -O "zyc-clang.tar.gz"
-              rm -rf clang && mkdir clang && tar -xvf zyc-clang.tar.gz -C clang && rm -rf zyc-clang.tar.gz
-            elif [ "${{ env.CLANG_CHOICE }}" = "2" ]; then
-              echo "Using WeebX Stable Clang."
-              wget "$(curl -s https://raw.githubusercontent.com/v3kt0r-87/Clang-Stable/main/clang-weebx.txt)" -O "weebx-clang.tar.gz"
-              rm -rf clang && mkdir clang && tar -xvf weebx-clang.tar.gz -C clang && rm -rf weebx-clang.tar.gz
-            else
-              echo "Invalid Clang choice. Exiting..."
-              exit 1
-            fi
+            echo "Cloning Clang Compiler..."
+            wget "$(curl -s https://raw.githubusercontent.com/v3kt0r-87/Clang-Stable/main/clang-zyc.txt)" -O "zyc-clang.tar.gz"
+            rm -rf clang && mkdir clang && tar -xvf zyc-clang.tar.gz -C clang && rm -rf zyc-clang.tar.gz
           fi
 
-      - name: Verify Clang Installation
-        run: |
-          if [ ! -f "$CLANG_DIR/bin/clang" ]; then
-            echo "Clang not found in $CLANG_DIR/bin/clang. Exiting..."
-            exit 1
-          fi
-          echo "Clang found in $CLANG_DIR/bin/clang"
-
-      - name: Set up Clang toolchain
-        run: |
-          export MAIN=${{ github.workspace }}
-          export PATH="$MAIN/clang/bin:$PATH"
-          export ARCH=arm64
-          export SUBARCH=arm64
-          export KBUILD_COMPILER_STRING="$($MAIN/clang/bin/clang --version | head -n 1 | perl -pe 's/\(http.*?\)//gs' | sed -e 's/  */ /g' -e 's/[[:space:]]*$//')"
-          
       - name: Build Kernel
         run: |
-          echo "Building kernel for device ${{ env.DEVICE }}"
-          # Choose kernel config based on device
-          if [ "${{ env.DEVICE }}" = "alioth" ]; then
-            KERNEL_DEFCONFIG=alioth_defconfig
-            DEVICE_NAME1="alioth"
-            DEVICE_NAME2="aliothin"
-            IS_SLOT_DEVICE=1
-            VENDOR_BOOT_LINES_REMOVED=0
+          export PATH="$CLANG_DIR/bin:$PATH"
+          export ARCH=arm64
+          export SUBARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          
+          cd $KERNEL_DIR
+          
+          # Verify Config File
+          if [ ! -f "arch/arm64/configs/$KERNEL_DEFCONFIG" ]; then
+            echo "ERROR: Kernel config file not found!"
+            exit 1
           fi
 
-          # Backup anykernel.sh and modify it
-          cp -p anykernel/anykernel.sh anykernel/anykernel.sh.bak
-          sed -i "s/device.name1=.*/device.name1=${DEVICE_NAME1}/" anykernel/anykernel.sh
-          sed -i "s/device.name2=.*/device.name2=${DEVICE_NAME2}/" anykernel/anykernel.sh
-          sed -i "s/is_slot_device=.*/is_slot_device=${IS_SLOT_DEVICE}/" anykernel/anykernel.sh
+          # Start Build
+          make ARCH=arm64 O=out $KERNEL_DEFCONFIG
+          make -j$(nproc --all) ARCH=arm64 O=out CC=clang CROSS_COMPILE=aarch64-linux-gnu- NM=llvm-nm OBJDUMP=llvm-objdump STRIP=llvm-strip
 
-          if [ "$VENDOR_BOOT_LINES_REMOVED" -eq 1 ]; then
-            sed -i '/## vendor_boot shell variables/,/## end vendor_boot install/d' anykernel/anykernel.sh
-          fi
-
-          # Run kernel build
-          make $KERNEL_DEFCONFIG O=out CC=clang
-          make -j$(nproc --all) O=out CC=clang ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- NM=llvm-nm OBJDUMP=llvm-objdump STRIP=llvm-strip
-
-      - name: Prepare Kernel Build Artifacts
+      - name: Package Kernel
         run: |
-          TIME="$(date "+%Y%m%d-%H%M%S")"
           mkdir -p tmp
           cp -fp $ZIMAGE_DIR/Image.gz tmp
           cp -fp $ZIMAGE_DIR/dtbo.img tmp
           cp -fp $ZIMAGE_DIR/dtb tmp
           cp -rp ./anykernel/* tmp
+          
           cd tmp
           7za a -mx9 tmp.zip *
           cd ..
-          rm *.zip
-          cp -fp tmp/tmp.zip RealKing-${{ env.DEVICE }}-${{ env.CHOICE }}-${TIME}.zip
+          
+          TIME="$(date "+%Y%m%d-%H%M%S")"
+          cp -fp tmp/tmp.zip RealKing-$DEVICE-$TIME.zip
           rm -rf tmp
-          echo $TIME
 
-      - name: Restore anykernel.sh
-        run: |
-          mv -f anykernel/anykernel.sh.bak anykernel/anykernel.sh
-
-      - name: Revert modifications
-        run: |
-          git checkout arch/arm64/boot/dts/vendor/qcom/dsi-panel-* &>/dev/null
-
-      - name: Create a GitHub release
-        id: create_release
-        uses: softprops/action-gh-release@v1
+      - name: Upload Kernel Artifact
+        uses: actions/upload-artifact@v4
         with:
-          tag_name: v1.0-${{ env.DEVICE }}-${{ env.BUILD_START }}
-          release_name: "Release for ${{ env.DEVICE }} ${BUILD_START}"
-          body: "Kernel release for ${{ env.DEVICE }}"
+          name: RealKing-Kernel
+          path: RealKing-${{ env.DEVICE }}-${{ env.CHOICE }}-${TIME}.zip
 
-      - name: Upload Kernel Build to Release
-        uses: softprops/action-gh-release@v1
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0-${{ env.DEVICE }}-${{ env.BUILD_START }}
-          asset_path: RealKing-${{ env.DEVICE }}-${{ env.CHOICE }}-${BUILD_START}.zip
-          asset_name: RealKing-${{ env.DEVICE }}-${{ env.CHOICE }}-${BUILD_START}.zip
-          asset_content_type: application/zip
+          files: RealKing-${{ env.DEVICE }}-${{ env.CHOICE }}-${TIME}.zip
+          tag_name: "release-${{ github.run_number }}"
+          name: "Kernel Release ${{ github.run_number }}"
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
