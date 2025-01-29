@@ -46,8 +46,17 @@ jobs:
             fi
           fi
 
+      - name: Verify Clang Installation
+        run: |
+          if [ ! -f "$CLANG_DIR/bin/clang" ]; then
+            echo "Clang not found in $CLANG_DIR/bin/clang. Exiting..."
+            exit 1
+          fi
+          echo "Clang found in $CLANG_DIR/bin/clang"
+
       - name: Set up Clang toolchain
         run: |
+          export MAIN=${{ github.workspace }}
           export PATH="$MAIN/clang/bin:$PATH"
           export ARCH=arm64
           export SUBARCH=arm64
